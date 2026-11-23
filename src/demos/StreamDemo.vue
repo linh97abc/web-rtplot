@@ -2,6 +2,7 @@
 import { markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import PlotView from '../components/PlotView.vue'
 import { LinkGroup, StreamSeries, type RendererKind } from '../rtplot'
+import { inTauri, startRustStream, stopRustStream } from './rustSource'
 
 const props = defineProps<{ dark: boolean; renderer: RendererKind }>()
 
@@ -9,6 +10,8 @@ const sampleRate = ref(10_000)
 const running = ref(true)
 const linked = ref(true)
 const windowSec = 5
+/** Nguồn dữ liệu: giả lập bằng JS, hoặc backend Rust khi chạy trong app Tauri */
+const source = ref<'js' | 'rust'>(inTauri ? 'rust' : 'js')
 
 // ---- tạo series (không reactive) ----
 function makeSeries(sr: number) {
@@ -29,7 +32,7 @@ let timer = 0
 const rate = ref(0)
 
 function generate() {
-  if (!running.value) return
+  if (!running.value || source.value !== 'js') return
   const sr = sampleRate.value
   const due = Math.floor(((performance.now() - t0) / 1000) * sr)
   const n = Math.min(due - produced, sr) // tối đa 1 giây/lần
@@ -59,13 +62,39 @@ function resetGenerator() {
   walk = 0
 }
 
+// ---- nguồn Rust (Tauri) ----
+function onRustChunk(ch: Float32Array[], n: number) {
+  const s = series.value
+  s.top[0].push(ch[0]); s.top[1].push(ch[1]); s.top[2].push(ch[2])
+  s.bottom[0].push(ch[3]); s.bottom[1].push(ch[4])
+  produced += n
+}
+const rustError = ref('')
+/** Bật/tắt luồng Rust cho khớp với trạng thái hiện tại */
+async function syncRust() {
+  if (!inTauri) return
+  try {
+    rustError.value = ''
+    if (running.value && source.value === 'rust') await startRustStream(sampleRate.value, produced, onRustChunk)
+    else await stopRustStream()
+  } catch (e) {
+    rustError.value = String(e)
+  }
+}
+
 watch(running, (r) => {
   // tiếp tục từ chỗ dừng (không nhảy cóc thời gian)
   if (r) t0 = performance.now() - (produced / sampleRate.value) * 1000
+  syncRust()
+})
+watch(source, () => {
+  t0 = performance.now() - (produced / sampleRate.value) * 1000
+  syncRust()
 })
 watch(sampleRate, async (sr) => {
   series.value = makeSeries(sr)
   resetGenerator()
+  syncRust()
   await nextTick() // chờ PlotView được tạo lại rồi liên kết lại
   applyLink()
 })
@@ -73,6 +102,7 @@ watch(sampleRate, async (sr) => {
 let lastProduced = 0
 let rateTimer = 0
 onMounted(() => {
+  syncRust()
   timer = window.setInterval(generate, 10)
   rateTimer = window.setInterval(() => {
     rate.value = (produced - lastProduced) * 5 * 5 // 5 kênh, 5 lần/giây
@@ -80,6 +110,7 @@ onMounted(() => {
   }, 200)
 })
 onBeforeUnmount(() => {
+  if (inTauri) stopRustStream().catch(() => {})
   clearInterval(timer)
   clearInterval(rateTimer)
 })
@@ -116,8 +147,16 @@ watch(linked, applyLink)
           <option :value="200000">200 kHz</option>
         </select>
       </label>
+      <label>
+        Nguồn dữ liệu
+        <select v-model="source" :title="inTauri ? '' : 'Chỉ có khi chạy trong app Tauri (npm run tauri dev)'">
+          <option value="js">JS giả lập</option>
+          <option value="rust" :disabled="!inTauri">Rust (Tauri){{ inTauri ? '' : ' — cần app Tauri' }}</option>
+        </select>
+      </label>
       <label><input v-model="linked" type="checkbox" /> Liên kết trục X</label>
       <span class="muted">{{ rate.toLocaleString('en-US') }} mẫu/giây (5 kênh)</span>
+      <span v-if="rustError" class="error">Lỗi Rust: {{ rustError }}</span>
     </div>
     <p class="hint">
       Lăn chuột: đổi độ rộng cửa sổ thời gian · <b>Shift + lăn</b> hoặc lăn trên trục Y: zoom dọc (vẫn đang chạy) ·
@@ -150,6 +189,9 @@ watch(linked, applyLink)
 </template>
 
 <style scoped>
+.error {
+  color: #d62728;
+}
 .demo {
   display: flex;
   flex-direction: column;

@@ -61,3 +61,24 @@ Nếu Firefox hiện fps cao hơn tần số quét màn hình (ví dụ 155 fps 
 khi streaming thì Firefox đang không đồng bộ vsync — không phải lỗi của thư viện. Trong `about:config`:
 đặt `layout.frame_rate` = tần số quét màn hình; nếu vẫn bị, bật `gfx.webrender.all` (X11: thêm
 `gfx.x11-egl.force-enabled`) rồi khởi động lại.
+
+## Chạy dưới dạng app desktop (Tauri)
+
+Nhánh `tauri` bọc demo thành app desktop bằng [Tauri 2](https://v2.tauri.app). Tab streaming có thêm
+nguồn dữ liệu **Rust (Tauri)**: một luồng Rust (`src-tauri/src/lib.rs`) sinh 5 kênh tín hiệu và đẩy
+sang giao diện qua `tauri::ipc::Channel` dưới dạng byte `f32` thô (không qua JSON) — giống cách một app
+thu dữ liệu thật đọc thiết bị ở Rust rồi vẽ bằng rtplot.
+
+Cần cài [Rust](https://rustup.rs) và thư viện hệ thống theo
+[hướng dẫn của Tauri](https://v2.tauri.app/start/prerequisites/) (Windows: WebView2 + MSVC Build Tools;
+macOS: Xcode Command Line Tools; Ubuntu/Debian:
+`sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev`).
+
+```bash
+npm install
+npm run tauri dev      # chạy app ở chế độ phát triển (hot reload)
+npm run tauri build    # đóng gói bộ cài trong src-tauri/target/release/bundle/
+```
+
+Webview của Tauri: Windows dùng WebView2 (Chromium), macOS dùng WKWebView (Safari), Linux dùng
+WebKitGTK — nên trên Linux hiệu năng/độ mượt có thể khác Chrome.

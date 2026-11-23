@@ -144,33 +144,32 @@ export abstract class IndexedSeries {
       return
     }
 
-    // ---- nhiều điểm: mỗi cột pixel vẽ 1 đoạn dọc từ min tới max ----
+    // ---- nhiều điểm: gom mẫu thành nhóm, mỗi nhóm vẽ 1 đoạn dọc từ min tới max ----
+    // Nhóm được chia theo CHỈ SỐ MẪU (căn theo bội số của binSize), không theo cột pixel.
+    // Nhờ vậy khi trục X trượt (streaming/pan) mỗi nhóm luôn chứa đúng những mẫu cũ,
+    // hình chỉ tịnh tiến chứ không bị "rung"/méo do ranh giới cột thay đổi mỗi khung hình.
+    // binSize là luỹ thừa của 2 để không đổi khi kích thước cửa sổ chỉ thay đổi nhẹ.
     const out = this.tmp
-    const colStart = Math.max(Math.floor(v.left), Math.floor(v.xToPx(this.xAt(i0))))
-    const colEnd = Math.min(Math.ceil(v.left + v.width), Math.ceil(v.xToPx(this.xAt(i1 - 1))) + 1)
-    let a = this.indexCeil(v.pxToX(colStart))
+    const samplesPerPx = n / Math.max(1, v.xToPx(this.xAt(i1 - 1)) - v.xToPx(this.xAt(i0)))
+    const binSize = Math.max(1, 2 ** Math.floor(Math.log2(Math.max(1, samplesPerPx))))
     let started = false
     let points = 0
-    // nối với mẫu ngay trước khung nhìn để không bị hở ở mép trái
-    if (a - 1 >= first) {
-      const y = this.yAt(a - 1)
-      if (y === y) { ctx.moveTo(v.xToPx(this.xAt(a - 1)), clampY(v.yToPx(y))); started = true; points++ }
-    }
-    for (let c = colStart; c < colEnd; c++) {
-      const b = this.indexCeil(v.pxToX(c + 1))
-      if (b > a && this.minMax(a, b, out)) {
-        const x = c + 0.5
-        const yTop = clampY(v.yToPx(out[1]))
-        const yBot = clampY(v.yToPx(out[0]))
-        if (!started) { ctx.moveTo(x, yTop); started = true } else ctx.lineTo(x, yTop)
-        ctx.lineTo(x, yBot === yTop ? yBot + 0.01 : yBot)
-        points += 2
-      }
-      a = b
-    }
-    if (a < end) {
-      const y = this.yAt(a)
-      if (y === y) { ctx.lineTo(v.xToPx(this.xAt(a)), clampY(v.yToPx(y))); points++ }
+    let lastY = 0
+    for (let b = Math.floor(i0 / binSize) * binSize; b < i1; b += binSize) {
+      const a = Math.max(b, first)
+      const e = Math.min(b + binSize, end)
+      if (e <= a || !this.minMax(a, e, out)) continue
+      const x = v.xToPx(this.xAt(a))
+      const yTop = clampY(v.yToPx(out[1]))
+      const yBot = clampY(v.yToPx(out[0]))
+      // đi từ đầu gần với điểm trước đó → tránh các đường chéo thừa làm dày nét
+      const fromTop = !started || Math.abs(lastY - yTop) <= Math.abs(lastY - yBot)
+      const y1 = fromTop ? yTop : yBot
+      const y2 = fromTop ? (yBot === yTop ? yBot + 0.01 : yBot) : yTop
+      if (!started) { ctx.moveTo(x, y1); started = true } else ctx.lineTo(x, y1)
+      ctx.lineTo(x, y2)
+      lastY = y2
+      points += 2
     }
     ctx.stroke()
     this.lastDrawnPoints = points

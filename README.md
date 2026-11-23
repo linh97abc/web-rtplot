@@ -9,7 +9,8 @@ npm run dev
 
 | File | Vai trò |
 |---|---|
-| `src/rtplot/Plot.ts` | Plot Canvas 2D: trục, lưới, pan/zoom, auto-scale, chế độ streaming (follow), xử lý resize/HiDPI |
+| `src/rtplot/Plot.ts` | Plot: trục, lưới, pan/zoom, auto-scale, chế độ streaming (follow, cuộn mượt), xử lý resize/HiDPI |
+| `src/rtplot/render/` | Backend vẽ: `WebGLRenderer` (mặc định), `Canvas2DRenderer` (dự phòng); `TextLayer` vẽ chữ bằng HTML |
 | `src/rtplot/series.ts` | `SignalSeries` (tĩnh, đều hoặc XY không đều), `StreamSeries` (ring buffer realtime) |
 | `src/rtplot/MinMaxPyramid.ts` | Cây min/max nhiều tầng → truy vấn min/max một đoạn trong O(log n) |
 | `src/rtplot/LinkGroup.ts` | Liên kết nhiều plot để zoom/pan đồng thời (trục X và/hoặc Y) |
@@ -24,7 +25,7 @@ npm run dev
 import { Plot, SignalSeries, StreamSeries, LinkGroup } from './rtplot'
 
 // tĩnh, hàng triệu điểm
-const p1 = new Plot(div1, { title: 'Tĩnh' })
+const p1 = new Plot(div1, { title: 'Tĩnh' })            // renderer: 'webgl' (mặc định) | 'canvas2d'
 p1.add(new SignalSeries({ name: 'A', ys: float32Array, sampleRate: 1000 }))
 p1.add(new SignalSeries({ name: 'XY', xs: sortedXs, ys }))
 
@@ -47,3 +48,16 @@ s.visible = false                                        // ẩn/hiện
 - Lăn trên trục X/Y: chỉ zoom trục đó
 - Kéo trái: pan · Kéo phải: zoom liên tục · Alt+kéo / kéo chuột giữa: zoom vùng chọn
 - Double-click: auto-scale (streaming: bám lại dữ liệu mới); double-click trên trục: chỉ trục đó
+
+## Renderer
+
+- Mặc định vẽ bằng **WebGL**, tự lùi về Canvas 2D nếu trình duyệt không hỗ trợ. Chọn thủ công bằng
+  `new Plot(el, { renderer: 'canvas2d' })`; demo có ô chọn ở góc phải (hoặc `?renderer=canvas2d`).
+- Chữ (nhãn trục, tiêu đề, toạ độ con trỏ) là phần tử HTML đặt chồng lên canvas.
+
+## Lưu ý Firefox trên Linux
+
+Nếu Firefox hiện fps cao hơn tần số quét màn hình (ví dụ 155 fps trên màn 60 Hz) và hình bị rung/xé
+khi streaming thì Firefox đang không đồng bộ vsync — không phải lỗi của thư viện. Trong `about:config`:
+đặt `layout.frame_rate` = tần số quét màn hình; nếu vẫn bị, bật `gfx.webrender.all` (X11: thêm
+`gfx.x11-egl.force-enabled`) rồi khởi động lại.

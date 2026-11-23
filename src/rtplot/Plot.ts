@@ -96,6 +96,10 @@ export class Plot {
   private cssW = 0
   private cssH = 0
   private frameRequested = false
+  /** Trạng thái cuộn mượt ở chế độ streaming */
+  private follow = { x: NaN, rate: 0, lastNow: 0, target: NaN, targetNow: 0 }
+  /** true → lần auto-scale Y kế tiếp khớp chính xác (bỏ qua độ trễ chống rung) */
+  private forceYFit = true
   private destroyed = false
   private resizeObs: ResizeObserver
   private listeners = new Set<ViewListener>()
@@ -168,6 +172,7 @@ export class Plot {
   autoScale() {
     this.autoX = true
     this.autoY = true
+    this.forceYFit = true
     this.updateAutoLimits()
     this.viewChanged()
   }
@@ -293,10 +298,8 @@ export class Plot {
     if (this.autoX) {
       const r = this.dataXRange()
       if (r) {
-        if (this.followWindow > 0) {
-          this.xMax = Math.max(r[1], r[0] + this.followWindow)
-          this.xMin = this.xMax - this.followWindow
-        } else {
+        if (this.followWindow > 0) this.updateFollow(Math.max(r[1], r[0] + this.followWindow))
+        else {
           this.xMin = r[0]
           this.xMax = r[1] > r[0] ? r[1] : r[0] + 1
         }
@@ -313,10 +316,62 @@ export class Plot {
       }
       if (lo <= hi && isFinite(lo) && isFinite(hi)) {
         const span = hi - lo || Math.abs(hi) || 1
-        this.yMin = lo - span * this.yPadding
-        this.yMax = hi + span * this.yPadding
+        const cur = this.yMax - this.yMin
+        // Streaming: giữ nguyên trục Y nếu dữ liệu vẫn nằm gọn trong khung và chiếm > 50% chiều cao.
+        // Không có độ trễ này, mỗi đỉnh nhiễu trôi vào/ra cửa sổ làm cả đồ thị co giãn → nhấp nháy.
+        const keep = this.followWindow > 0 && !this.forceYFit && cur > 0 &&
+          lo >= this.yMin && hi <= this.yMax && span > cur * 0.5
+        if (!keep) {
+          const pad = this.followWindow > 0 && !this.forceYFit ? this.yPadding + 0.1 : this.yPadding
+          this.yMin = lo - span * pad
+          this.yMax = hi + span * pad
+        }
+        this.forceYFit = false
       }
     }
+  }
+
+  /**
+   * Cuộn mượt khi streaming. Dữ liệu thường đến theo từng cụm (WebSocket, timer...) nên nếu
+   * mép phải nhảy thẳng tới mẫu mới nhất thì mỗi khung hình dịch một khoảng khác nhau → giật.
+   * Ở đây mép phải chạy đều theo tốc độ ước lượng của dữ liệu và được kéo dần về mẫu mới nhất.
+   * Vị trí còn được làm tròn theo lưới pixel để nét vẽ không bị nhoè/nhấp nháy giữa các khung.
+   */
+  private updateFollow(target: number) {
+    const f = this.follow
+    const now = performance.now()
+    const win = this.followWindow
+    if (target !== f.target) {
+      if (isFinite(f.target) && target > f.target) {
+        const inst = (target - f.target) / Math.max(1, now - f.targetNow)
+        f.rate = f.rate > 0 ? f.rate * 0.95 + inst * 0.05 : inst
+      }
+      f.target = target
+      f.targetNow = now
+    }
+    const stalled = now - f.targetNow > 250 // dữ liệu ngừng đến (tạm dừng)
+    let x: number
+    if (!isFinite(f.x) || Math.abs(target - f.x) > win * 0.2) {
+      x = target // lệch quá xa (mới bắt đầu, đổi cửa sổ, dữ liệu reset) → nhảy thẳng
+    } else if (stalled) {
+      x = f.x + (target - f.x) * 0.3
+      if (Math.abs(target - x) < win * 1e-6) x = target
+    } else {
+      x = f.x + f.rate * (now - f.lastNow)
+      x += (target - x) * 0.08
+    }
+    f.x = x
+    f.lastNow = now
+    // làm tròn theo pixel
+    const pxW = win / Math.max(1, this.plotRect.width)
+    this.xMin = Math.round((x - win) / pxW) * pxW
+    this.xMax = this.xMin + win
+  }
+
+  /** Đang cuộn liên tục (cần vẽ lại mỗi khung hình dù không có dữ liệu mới)? */
+  private get animating() {
+    const f = this.follow
+    return this.autoX && this.followWindow > 0 && isFinite(f.x) && f.x !== f.target
   }
 
   private viewChanged() {
@@ -468,6 +523,7 @@ export class Plot {
     this.stats.totalPoints = total
     this.stats.renderMs = performance.now() - t0
     for (const fn of this.renderListeners) fn()
+    if (this.animating) this.invalidate()
   }
 
   // ===================== Tương tác =====================
@@ -611,6 +667,7 @@ export class Plot {
       this.autoX = true
       this.autoY = true
     }
+    if (this.autoY) this.forceYFit = true
     this.updateAutoLimits()
     this.viewChanged()
   }

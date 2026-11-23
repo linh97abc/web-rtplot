@@ -110,7 +110,7 @@ export abstract class IndexedSeries {
 
     ctx.strokeStyle = this.color
     ctx.lineWidth = this.lineWidth * v.dpr
-    ctx.lineJoin = 'round'
+    ctx.lineJoin = 'bevel' // 'round' rất chậm trên Firefox với đường nhiều đỉnh
     ctx.beginPath()
     const clampY = (y: number) => (y < -1e6 ? -1e6 : y > 1e6 ? 1e6 : y)
 
@@ -144,34 +144,43 @@ export abstract class IndexedSeries {
       return
     }
 
-    // ---- nhiều điểm: gom mẫu thành nhóm, mỗi nhóm vẽ 1 đoạn dọc từ min tới max ----
+    // ---- nhiều điểm: gom mẫu thành nhóm, mỗi nhóm vẽ 1 thanh dọc từ min tới max ----
     // Nhóm được chia theo CHỈ SỐ MẪU (căn theo bội số của binSize), không theo cột pixel.
     // Nhờ vậy khi trục X trượt (streaming/pan) mỗi nhóm luôn chứa đúng những mẫu cũ,
     // hình chỉ tịnh tiến chứ không bị "rung"/méo do ranh giới cột thay đổi mỗi khung hình.
     // binSize là luỹ thừa của 2 để không đổi khi kích thước cửa sổ chỉ thay đổi nhẹ.
+    //
+    // Các thanh được gom vào MỘT path hình chữ nhật rồi fill() một lần: nhanh hơn nhiều so với
+    // stroke() một polyline hàng nghìn đỉnh (đặc biệt trên Firefox), và x được làm tròn theo
+    // pixel nên nét sắc, không nhoè/nhấp nháy giữa các khung hình.
     const out = this.tmp
     const samplesPerPx = n / Math.max(1, v.xToPx(this.xAt(i1 - 1)) - v.xToPx(this.xAt(i0)))
     const binSize = Math.max(1, 2 ** Math.floor(Math.log2(Math.max(1, samplesPerPx))))
-    let started = false
+    const w = Math.max(1, Math.round(this.lineWidth * v.dpr))
+    const half = w / 2
     let points = 0
-    let lastY = 0
+    let prevLo = NaN, prevHi = NaN // toạ độ pixel (lo = trên, hi = dưới) của thanh trước
+    ctx.fillStyle = this.color
     for (let b = Math.floor(i0 / binSize) * binSize; b < i1; b += binSize) {
       const a = Math.max(b, first)
       const e = Math.min(b + binSize, end)
       if (e <= a || !this.minMax(a, e, out)) continue
-      const x = v.xToPx(this.xAt(a))
-      const yTop = clampY(v.yToPx(out[1]))
-      const yBot = clampY(v.yToPx(out[0]))
-      // đi từ đầu gần với điểm trước đó → tránh các đường chéo thừa làm dày nét
-      const fromTop = !started || Math.abs(lastY - yTop) <= Math.abs(lastY - yBot)
-      const y1 = fromTop ? yTop : yBot
-      const y2 = fromTop ? (yBot === yTop ? yBot + 0.01 : yBot) : yTop
-      if (!started) { ctx.moveTo(x, y1); started = true } else ctx.lineTo(x, y1)
-      ctx.lineTo(x, y2)
-      lastY = y2
+      const x = Math.round(v.xToPx(this.xAt(a)) - half)
+      let top = clampY(v.yToPx(out[1]))
+      let bot = clampY(v.yToPx(out[0]))
+      // nối liền với thanh trước: kéo dài thanh tới mép gần nhất của thanh trước nếu bị hở
+      const curTop = top, curBot = bot
+      if (prevLo === prevLo) {
+        if (top > prevHi) top = prevHi
+        if (bot < prevLo) bot = prevLo
+      }
+      prevLo = curTop
+      prevHi = curBot
+      const y = Math.round(top - half)
+      ctx.rect(x, y, w, Math.max(w, Math.round(bot + half) - y))
       points += 2
     }
-    ctx.stroke()
+    ctx.fill()
     this.lastDrawnPoints = points
   }
 }

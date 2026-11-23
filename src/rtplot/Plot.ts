@@ -90,7 +90,11 @@ export class Plot {
   followWindow: number
 
   /** Thống kê khung hình gần nhất */
-  stats = { renderMs: 0, drawnPoints: 0, totalPoints: 0 }
+  stats = { renderMs: 0, drawnPoints: 0, totalPoints: 0, fps: 0 }
+  private fpsFrames = 0
+  private fpsSince = 0
+  /** Thời điểm của khung hình đang vẽ (mốc của requestAnimationFrame) */
+  private frameTime = 0
 
   private dpr = 1
   private cssW = 0
@@ -213,7 +217,10 @@ export class Plot {
   invalidate() {
     if (this.frameRequested || this.destroyed) return
     this.frameRequested = true
-    requestAnimationFrame(() => {
+    requestAnimationFrame((t) => {
+      // mốc thời gian của rAF bám theo vsync và không bị giảm độ chính xác như performance.now()
+      // trên Firefox → tốc độ cuộn đều hơn
+      this.frameTime = t
       this.frameRequested = false
       if (!this.destroyed) this.render()
     })
@@ -339,7 +346,7 @@ export class Plot {
    */
   private updateFollow(target: number) {
     const f = this.follow
-    const now = performance.now()
+    const now = this.frameTime || performance.now()
     const win = this.followWindow
     if (target !== f.target) {
       if (isFinite(f.target) && target > f.target) {
@@ -522,6 +529,12 @@ export class Plot {
     this.stats.drawnPoints = drawn
     this.stats.totalPoints = total
     this.stats.renderMs = performance.now() - t0
+    this.fpsFrames++
+    if (t0 - this.fpsSince >= 1000) {
+      this.stats.fps = (this.fpsFrames * 1000) / (t0 - this.fpsSince)
+      this.fpsFrames = 0
+      this.fpsSince = t0
+    }
     for (const fn of this.renderListeners) fn()
     if (this.animating) this.invalidate()
   }

@@ -21,7 +21,7 @@ const host = ref<HTMLDivElement>()
 const plot = shallowRef<Plot>()
 // bản sao trạng thái ẩn/hiện để legend phản ứng (series gốc không reactive để giữ hiệu năng)
 const visible = ref<boolean[]>([])
-const stats = ref({ renderMs: 0, drawnPoints: 0, totalPoints: 0 })
+const stats = ref({ renderMs: 0, drawnPoints: 0, totalPoints: 0, fps: 0 })
 
 function sync(list: Series[]) {
   const p = plot.value
@@ -102,7 +102,7 @@ const fmt = (n: number) => n.toLocaleString('en-US')
       <span class="spacer" />
       <button class="item" title="Auto-scale (double-click)" @click="plot?.autoScale()">⤢ Auto</button>
       <span class="stats">
-        {{ fmt(stats.drawnPoints) }} / {{ fmt(stats.totalPoints) }} điểm · {{ stats.renderMs.toFixed(1) }} ms
+        {{ fmt(stats.drawnPoints) }} / {{ fmt(stats.totalPoints) }} điểm · {{ stats.renderMs.toFixed(1) }} ms<template v-if="stats.fps > 0"> · {{ stats.fps.toFixed(0) }} fps</template>
       </span>
     </div>
     <div ref="host" class="host" />

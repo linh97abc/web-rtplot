@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import PlotView from '../components/PlotView.vue'
-import { LinkGroup, StreamSeries } from '../rtplot'
+import { LinkGroup, StreamSeries, type RendererKind } from '../rtplot'
 
-defineProps<{ dark: boolean }>()
+const props = defineProps<{ dark: boolean; renderer: RendererKind }>()
 
 const sampleRate = ref(10_000)
 const running = ref(true)
@@ -96,6 +96,10 @@ function applyLink() {
   if (b) link.add(b, { x: true })
 }
 onMounted(applyLink)
+watch(() => props.renderer, async () => {
+  await nextTick() // PlotView được tạo lại với backend mới → liên kết lại
+  applyLink()
+})
 watch(linked, applyLink)
 </script>
 
@@ -122,7 +126,8 @@ watch(linked, applyLink)
     <div class="plots">
       <PlotView
         ref="topView"
-        :key="'t' + sampleRate"
+        :key="'t' + sampleRate + renderer"
+        :renderer="renderer"
         :series="series.top"
         :follow-window="windowSec"
         :dark="dark"
@@ -132,7 +137,8 @@ watch(linked, applyLink)
       />
       <PlotView
         ref="bottomView"
-        :key="'b' + sampleRate"
+        :key="'b' + sampleRate + renderer"
+        :renderer="renderer"
         :series="series.bottom"
         :follow-window="windowSec"
         :dark="dark"

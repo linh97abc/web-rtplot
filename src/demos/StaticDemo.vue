@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { markRaw, nextTick, onMounted, ref, shallowRef, watch } from 'vue'
 import PlotView from '../components/PlotView.vue'
-import { LinkGroup, SignalSeries, type Series } from '../rtplot'
+import { LinkGroup, SignalSeries, type Series, type RendererKind } from '../rtplot'
 
-defineProps<{ dark: boolean }>()
+const props = defineProps<{ dark: boolean; renderer: RendererKind }>()
 
 const pointsPerSeries = ref(1_000_000)
 const linkX = ref(true)
@@ -107,6 +107,10 @@ function applyLink() {
   }
 }
 watch([linkX, linkY], applyLink)
+watch(() => props.renderer, async () => {
+  await nextTick()
+  applyLink()
+})
 
 onMounted(build)
 </script>
@@ -133,9 +137,9 @@ onMounted(build)
       Alt + kéo / kéo chuột giữa: zoom vùng chọn · Double-click: auto-scale · Click tên tín hiệu để ẩn/hiện
     </p>
     <div class="plots">
-      <PlotView ref="v1" :series="top" :dark="dark" title="3 tín hiệu trên 1 plot" y-label="Giá trị" />
-      <PlotView ref="v2" :series="middle" :dark="dark" title="2 tín hiệu" />
-      <PlotView ref="v3" :series="bottom" :dark="dark" title="SignalXY" x-label="Thời gian (s)" />
+      <PlotView ref="v1" :key="'1' + renderer" :renderer="renderer" :series="top" :dark="dark" title="3 tín hiệu trên 1 plot" y-label="Giá trị" />
+      <PlotView ref="v2" :key="'2' + renderer" :renderer="renderer" :series="middle" :dark="dark" title="2 tín hiệu" />
+      <PlotView ref="v3" :key="'3' + renderer" :renderer="renderer" :series="bottom" :dark="dark" title="SignalXY" x-label="Thời gian (s)" />
     </div>
   </div>
 </template>

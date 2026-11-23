@@ -1,5 +1,11 @@
 import { niceTicks, formatTick } from './ticks'
 import type { Series, View } from './series'
+import { FloatBuffer, type Renderer } from './render/Renderer'
+import { WebGLRenderer } from './render/WebGLRenderer'
+import { Canvas2DRenderer } from './render/Canvas2DRenderer'
+import { TextLayer } from './render/TextLayer'
+
+export type RendererKind = 'webgl' | 'canvas2d'
 
 export interface PlotTheme {
   background: string
@@ -37,6 +43,8 @@ export interface PlotOptions {
   followWindow?: number
   /** Khoảng đệm khi auto-scale Y (tỉ lệ so với biên độ) */
   yPadding?: number
+  /** Backend vẽ. Mặc định 'webgl', tự lùi về 'canvas2d' nếu trình duyệt không hỗ trợ WebGL */
+  renderer?: RendererKind
 }
 
 /** Trạng thái trục — được truyền giữa các plot liên kết */
@@ -58,7 +66,7 @@ type Region = 'plot' | 'xaxis' | 'yaxis' | 'none'
 const MARGIN = { left: 62, right: 24, top: 10, bottom: 34 }
 
 /**
- * Plot vẽ bằng Canvas 2D, không phụ thuộc framework.
+ * Plot không phụ thuộc framework. Hình vẽ bằng WebGL (hoặc Canvas 2D), chữ bằng phần tử HTML.
  *
  * Chuột:
  *  - Lăn: zoom X  ·  Shift+lăn: zoom Y  ·  Ctrl+lăn: zoom cả hai
@@ -69,7 +77,10 @@ const MARGIN = { left: 62, right: 24, top: 10, bottom: 34 }
 export class Plot {
   readonly container: HTMLElement
   readonly canvas: HTMLCanvasElement
-  private ctx: CanvasRenderingContext2D
+  private renderer: Renderer
+  private textLayer: TextLayer
+  private boxEl: HTMLDivElement
+  private segBuf = new FloatBuffer(512)
   readonly series: Series[] = []
 
   title: string
@@ -130,14 +141,37 @@ export class Plot {
     if (getComputedStyle(container).position === 'static') container.style.position = 'relative'
     Object.assign(this.canvas.style, { position: 'absolute', left: '0', top: '0', width: '100%', height: '100%', touchAction: 'none', cursor: 'crosshair' })
     container.appendChild(this.canvas)
-    const ctx = this.canvas.getContext('2d', { alpha: false })
-    if (!ctx) throw new Error('Canvas 2D không khả dụng')
-    this.ctx = ctx
+    this.renderer = this.createRenderer(opts.renderer ?? 'webgl')
+    this.textLayer = new TextLayer(container)
+    this.boxEl = document.createElement('div')
+    Object.assign(this.boxEl.style, {
+      position: 'absolute', display: 'none', pointerEvents: 'none',
+      background: 'rgba(100,150,255,0.15)', border: '1px solid rgba(100,150,255,0.9)',
+    })
+    container.appendChild(this.boxEl)
 
     this.resizeObs = new ResizeObserver(() => this.handleResize())
     this.resizeObs.observe(container)
     this.handleResize()
     this.bindEvents()
+  }
+
+  private createRenderer(kind: RendererKind): Renderer {
+    if (kind === 'webgl') {
+      try {
+        const r = new WebGLRenderer(this.canvas)
+        r.restoreCallback = () => this.invalidate()
+        return r
+      } catch (e) {
+        console.warn('[rtplot] WebGL không khả dụng, dùng Canvas 2D', e)
+      }
+    }
+    return new Canvas2DRenderer(this.canvas)
+  }
+
+  /** Backend đang dùng thực tế */
+  get rendererKind(): RendererKind {
+    return this.renderer.kind
   }
 
   // ===================== API công khai =====================
@@ -231,6 +265,9 @@ export class Plot {
     this.resizeObs.disconnect()
     this.unbindEvents()
     for (const s of this.series) s.onChange = null
+    this.renderer.destroy()
+    this.textLayer.destroy()
+    this.boxEl.remove()
     this.canvas.remove()
     this.listeners.clear()
     this.renderListeners.clear()
@@ -395,10 +432,7 @@ export class Plot {
     this.cssW = Math.max(1, Math.floor(rect.width))
     this.cssH = Math.max(1, Math.floor(rect.height))
     const w = Math.round(this.cssW * this.dpr), h = Math.round(this.cssH * this.dpr)
-    if (this.canvas.width !== w || this.canvas.height !== h) {
-      this.canvas.width = w
-      this.canvas.height = h
-    }
+    this.renderer.resize(w, h)
     // vẽ ngay (đồng bộ) để không bị nháy trắng khi kéo cửa sổ
     this.render()
   }
@@ -409,128 +443,86 @@ export class Plot {
     if (!(this.xMax > this.xMin)) this.xMax = this.xMin + 1
     if (!(this.yMax > this.yMin)) this.yMax = this.yMin + 1
 
-    const ctx = this.ctx, th = this.theme, d = this.dpr
+    const r = this.renderer, th = this.theme, d = this.dpr
     const v = this.makeView()
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.fillStyle = th.background
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height)
-    ctx.fillStyle = th.plotBackground
-    ctx.fillRect(v.left, v.top, v.width, v.height)
+    r.begin(th.background)
+    r.fillRect(v.left, v.top, v.width, v.height, th.plotBackground)
 
-    // lưới + nhãn trục
-    ctx.font = th.font.replace(/(\d+(\.\d+)?)px/, (_, n) => `${parseFloat(n) * d}px`)
-    ctx.lineWidth = 1
+    // lưới
     const xt = niceTicks(v.xMin, v.xMax, Math.max(3, Math.floor(v.width / (90 * d))))
     const yt = niceTicks(v.yMin, v.yMax, Math.max(3, Math.floor(v.height / (32 * d))))
-    ctx.strokeStyle = th.grid
-    ctx.beginPath()
-    for (const x of xt.ticks) {
-      const px = Math.round(v.xToPx(x)) + 0.5
-      ctx.moveTo(px, v.top)
-      ctx.lineTo(px, v.top + v.height)
-    }
-    for (const y of yt.ticks) {
-      const py = Math.round(v.yToPx(y)) + 0.5
-      ctx.moveTo(v.left, py)
-      ctx.lineTo(v.left + v.width, py)
-    }
-    ctx.stroke()
+    const seg = this.segBuf
+    const xs = xt.ticks.map((x) => Math.round(v.xToPx(x)) + 0.5)
+    const ys = yt.ticks.map((y) => Math.round(v.yToPx(y)) + 0.5)
+    seg.reset()
+    for (const px of xs) seg.push4(px, v.top, px, v.top + v.height)
+    for (const py of ys) seg.push4(v.left, py, v.left + v.width, py)
+    r.segments(seg.data, seg.length / 4, th.grid, 1)
 
     // series (cắt trong vùng plot)
-    ctx.save()
-    ctx.beginPath()
-    ctx.rect(v.left, v.top, v.width, v.height)
-    ctx.clip()
+    r.clip({ x: v.left, y: v.top, w: v.width, h: v.height })
     let drawn = 0, total = 0
     for (const s of this.series) {
       total += s.count
       if (!s.visible) continue
-      s.draw(ctx, v)
+      s.draw(r, v)
       drawn += s.lastDrawnPoints
     }
-    ctx.restore()
+    r.clip(null)
 
     // khung + vạch chia
-    ctx.strokeStyle = th.axis
-    ctx.lineWidth = d
-    ctx.strokeRect(v.left + 0.5, v.top + 0.5, v.width - 1, v.height - 1)
-    ctx.fillStyle = th.text
-    ctx.beginPath()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    for (const x of xt.ticks) {
-      const px = Math.round(v.xToPx(x)) + 0.5
-      ctx.moveTo(px, v.top + v.height)
-      ctx.lineTo(px, v.top + v.height + 4 * d)
-      ctx.fillText(formatTick(x, xt.step), px, v.top + v.height + 6 * d)
-    }
-    ctx.textAlign = 'right'
-    ctx.textBaseline = 'middle'
-    for (const y of yt.ticks) {
-      const py = Math.round(v.yToPx(y)) + 0.5
-      ctx.moveTo(v.left - 4 * d, py)
-      ctx.lineTo(v.left, py)
-      ctx.fillText(formatTick(y, yt.step), v.left - 6 * d, py)
-    }
-    ctx.stroke()
+    const L = v.left + 0.5 * d, T = v.top + 0.5 * d
+    const R = v.left + v.width - 0.5 * d, B = v.top + v.height - 0.5 * d
+    seg.reset()
+    seg.push4(L, T, R, T)
+    seg.push4(R, T, R, B)
+    seg.push4(R, B, L, B)
+    seg.push4(L, B, L, T)
+    for (const px of xs) seg.push4(px, v.top + v.height, px, v.top + v.height + 4 * d)
+    for (const py of ys) seg.push4(v.left - 4 * d, py, v.left, py)
+    r.segments(seg.data, seg.length / 4, th.axis, d)
+    r.end()
 
-    // tiêu đề & nhãn
-    if (this.title) {
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'top'
-      ctx.font = `600 ${12 * d}px system-ui, sans-serif`
-      ctx.fillText(this.title, v.left + v.width / 2, 6 * d)
-      ctx.font = th.font.replace(/(\d+(\.\d+)?)px/, (_, n) => `${parseFloat(n) * d}px`)
-    }
-    if (this.xLabel) {
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'bottom'
-      ctx.fillText(this.xLabel, v.left + v.width / 2, this.canvas.height - 4 * d)
-    }
-    if (this.yLabel) {
-      ctx.save()
-      ctx.translate(12 * d, v.top + v.height / 2)
-      ctx.rotate(-Math.PI / 2)
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillText(this.yLabel, 0, 0)
-      ctx.restore()
-    }
-
-    // hình chữ nhật zoom vùng chọn
-    if (this.drag === 'box') {
-      const x0 = this.dragStart.x * d, y0 = this.dragStart.y * d
-      const x1 = this.dragCur.x * d, y1 = this.dragCur.y * d
-      ctx.fillStyle = 'rgba(100,150,255,0.15)'
-      ctx.strokeStyle = 'rgba(100,150,255,0.9)'
-      ctx.lineWidth = d
-      ctx.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0))
-      ctx.strokeRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0))
-    }
-
+    // ---- chữ (HTML, toạ độ CSS px) ----
+    const tl = this.textLayer
+    const font = th.font
+    tl.begin()
+    xt.ticks.forEach((x, i) => tl.text(formatTick(x, xt.step), xs[i] / d, (v.top + v.height) / d + 6, 'center', 'top', th.text, font))
+    yt.ticks.forEach((y, i) => tl.text(formatTick(y, yt.step), v.left / d - 6, ys[i] / d, 'right', 'middle', th.text, font))
+    if (this.title) tl.text(this.title, (v.left + v.width / 2) / d, 6, 'center', 'top', th.text, '600 12px system-ui, sans-serif')
+    if (this.xLabel) tl.text(this.xLabel, (v.left + v.width / 2) / d, this.cssH - 4, 'center', 'bottom', th.text, font)
+    if (this.yLabel) tl.text(this.yLabel, 12, (v.top + v.height / 2) / d, 'center', 'middle', th.text, font, -90)
     // toạ độ con trỏ
     if (this.mouse && this.regionAt(this.mouse.x, this.mouse.y) === 'plot') {
       const p = this.cssToData(this.mouse.x, this.mouse.y)
       const txt = `x=${formatTick(p.x, xt.step / 100)}  y=${formatTick(p.y, yt.step / 100)}`
-      ctx.textAlign = 'right'
-      ctx.textBaseline = 'top'
-      ctx.fillStyle = th.text
-      ctx.fillText(txt, v.left + v.width - 6 * d, v.top + 6 * d)
+      tl.text(txt, (v.left + v.width) / d - 6, v.top / d + 6, 'right', 'top', th.text, font)
     }
-
     // trạng thái
     if (this.followWindow > 0 && !this.autoX) {
-      ctx.textAlign = 'left'
-      ctx.textBaseline = 'top'
-      ctx.fillStyle = '#e0a030'
-      ctx.fillText('⏸ đã dừng bám (double-click để tiếp tục)', v.left + 6 * d, v.top + 6 * d)
+      tl.text('⏸ đã dừng bám (double-click để tiếp tục)', v.left / d + 6, v.top / d + 6, 'left', 'top', '#e0a030', font)
     }
+    tl.end()
+
+    // hình chữ nhật zoom vùng chọn
+    if (this.drag === 'box') {
+      const { x: x0, y: y0 } = this.dragStart, { x: x1, y: y1 } = this.dragCur
+      Object.assign(this.boxEl.style, {
+        display: 'block', left: Math.min(x0, x1) + 'px', top: Math.min(y0, y1) + 'px',
+        width: Math.abs(x1 - x0) + 'px', height: Math.abs(y1 - y0) + 'px',
+      })
+    } else if (this.boxEl.style.display !== 'none') this.boxEl.style.display = 'none'
 
     this.stats.drawnPoints = drawn
     this.stats.totalPoints = total
     this.stats.renderMs = performance.now() - t0
-    this.fpsFrames++
-    if (t0 - this.fpsSince >= 1000) {
+    // fps chỉ có ý nghĩa khi đang cuộn liên tục (streaming)
+    if (!this.animating) {
+      this.stats.fps = 0
+      this.fpsFrames = 0
+      this.fpsSince = t0
+    } else this.fpsFrames++
+    if (this.fpsFrames > 0 && t0 - this.fpsSince >= 1000) {
       this.stats.fps = (this.fpsFrames * 1000) / (t0 - this.fpsSince)
       this.fpsFrames = 0
       this.fpsSince = t0

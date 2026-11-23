@@ -1,4 +1,8 @@
 import { MinMaxPyramid } from './MinMaxPyramid'
+import { FloatBuffer, type Renderer } from './render/Renderer'
+
+/** Bộ đệm đỉnh dùng chung cho mọi series (vẽ tuần tự nên không xung đột) */
+const scratch = new FloatBuffer(1 << 15)
 
 /** Thông tin vùng vẽ, mọi toạ độ pixel đều là device pixel (đã nhân devicePixelRatio). */
 export interface View {
@@ -98,7 +102,7 @@ export abstract class IndexedSeries {
     return [this.tmp[0], this.tmp[1]]
   }
 
-  draw(ctx: CanvasRenderingContext2D, v: View) {
+  draw(r: Renderer, v: View) {
     this.lastDrawnPoints = 0
     const first = this.firstIndex(), end = this.endIndex()
     if (end <= first) return
@@ -107,39 +111,31 @@ export abstract class IndexedSeries {
     const i1 = Math.min(end, this.indexCeil(v.xMax) + 1)
     const n = i1 - i0
     if (n <= 0) return
-
-    ctx.strokeStyle = this.color
-    ctx.lineWidth = this.lineWidth * v.dpr
-    ctx.lineJoin = 'bevel' // 'round' rất chậm trên Firefox với đường nhiều đỉnh
-    ctx.beginPath()
     const clampY = (y: number) => (y < -1e6 ? -1e6 : y > 1e6 ? 1e6 : y)
+    const buf = scratch
+    buf.reset()
 
     if (n <= v.width * 2) {
       // ---- ít điểm: vẽ trực tiếp từng mẫu ----
-      let pen = false
+      buf.reserve(n * 2)
       for (let i = i0; i < i1; i++) {
         const y = this.yAt(i)
-        if (y !== y) { pen = false; continue } // NaN → ngắt đường
-        const px = v.xToPx(this.xAt(i)), py = clampY(v.yToPx(y))
-        if (pen) ctx.lineTo(px, py)
-        else { ctx.moveTo(px, py); pen = true }
+        buf.push2(v.xToPx(this.xAt(i)), y !== y ? NaN : clampY(v.yToPx(y))) // NaN → ngắt đường
       }
-      ctx.stroke()
+      r.polyline(buf.data, n, this.color, this.lineWidth * v.dpr)
       this.lastDrawnPoints = n
       // zoom đủ sâu (mỗi mẫu cách nhau > 6px) → vẽ chấm cho từng mẫu
       const spanPx = v.xToPx(this.xAt(i1 - 1)) - v.xToPx(this.xAt(i0))
       if (this.markers && n > 1 && spanPx / (n - 1) > 6 * v.dpr) {
-        ctx.fillStyle = this.color
-        const r = Math.max(1.5, this.lineWidth * 1.5) * v.dpr
-        ctx.beginPath()
-        for (let i = i0; i < i1; i++) {
-          const y = this.yAt(i)
-          if (y !== y) continue
-          const px = v.xToPx(this.xAt(i)), py = v.yToPx(y)
-          ctx.moveTo(px + r, py)
-          ctx.arc(px, py, r, 0, Math.PI * 2)
+        let k = 0
+        const d = buf.data
+        for (let i = 0; i < n; i++) {
+          if (d[i * 2 + 1] !== d[i * 2 + 1]) continue
+          d[k * 2] = d[i * 2]
+          d[k * 2 + 1] = d[i * 2 + 1]
+          k++
         }
-        ctx.fill()
+        r.dots(d, k, this.color, Math.max(1.5, this.lineWidth * 1.5) * v.dpr)
       }
       return
     }
@@ -149,18 +145,14 @@ export abstract class IndexedSeries {
     // Nhờ vậy khi trục X trượt (streaming/pan) mỗi nhóm luôn chứa đúng những mẫu cũ,
     // hình chỉ tịnh tiến chứ không bị "rung"/méo do ranh giới cột thay đổi mỗi khung hình.
     // binSize là luỹ thừa của 2 để không đổi khi kích thước cửa sổ chỉ thay đổi nhẹ.
-    //
-    // Các thanh được gom vào MỘT path hình chữ nhật rồi fill() một lần: nhanh hơn nhiều so với
-    // stroke() một polyline hàng nghìn đỉnh (đặc biệt trên Firefox), và x được làm tròn theo
-    // pixel nên nét sắc, không nhoè/nhấp nháy giữa các khung hình.
+    // Thanh được làm tròn theo pixel nên nét sắc, không nhoè/nhấp nháy giữa các khung hình.
     const out = this.tmp
     const samplesPerPx = n / Math.max(1, v.xToPx(this.xAt(i1 - 1)) - v.xToPx(this.xAt(i0)))
     const binSize = Math.max(1, 2 ** Math.floor(Math.log2(Math.max(1, samplesPerPx))))
     const w = Math.max(1, Math.round(this.lineWidth * v.dpr))
     const half = w / 2
-    let points = 0
-    let prevLo = NaN, prevHi = NaN // toạ độ pixel (lo = trên, hi = dưới) của thanh trước
-    ctx.fillStyle = this.color
+    let count = 0
+    let prevTop = NaN, prevBot = NaN // toạ độ pixel của thanh trước
     for (let b = Math.floor(i0 / binSize) * binSize; b < i1; b += binSize) {
       const a = Math.max(b, first)
       const e = Math.min(b + binSize, end)
@@ -170,18 +162,18 @@ export abstract class IndexedSeries {
       let bot = clampY(v.yToPx(out[0]))
       // nối liền với thanh trước: kéo dài thanh tới mép gần nhất của thanh trước nếu bị hở
       const curTop = top, curBot = bot
-      if (prevLo === prevLo) {
-        if (top > prevHi) top = prevHi
-        if (bot < prevLo) bot = prevLo
+      if (prevTop === prevTop) {
+        if (top > prevBot) top = prevBot
+        if (bot < prevTop) bot = prevTop
       }
-      prevLo = curTop
-      prevHi = curBot
+      prevTop = curTop
+      prevBot = curBot
       const y = Math.round(top - half)
-      ctx.rect(x, y, w, Math.max(w, Math.round(bot + half) - y))
-      points += 2
+      buf.push4(x, y, w, Math.max(w, Math.round(bot + half) - y))
+      count++
     }
-    ctx.fill()
-    this.lastDrawnPoints = points
+    r.rects(buf.data, count, this.color)
+    this.lastDrawnPoints = count * 2
   }
 }
 

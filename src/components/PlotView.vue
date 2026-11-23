@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch, markRaw } from 'vue'
-import { Plot, darkTheme, lightTheme, type LinkGroup, type Series, type LinkAxes } from '../rtplot'
+import { Plot, darkTheme, lightTheme, type LinkGroup, type Series, type LinkAxes, type RendererKind } from '../rtplot'
 
 const props = withDefaults(
   defineProps<{
@@ -13,8 +13,10 @@ const props = withDefaults(
     dark?: boolean
     link?: LinkGroup
     linkAxes?: LinkAxes
+    /** Backend vẽ; đổi giá trị cần tạo lại component (dùng :key) */
+    renderer?: RendererKind
   }>(),
-  { title: '', xLabel: '', yLabel: '', followWindow: 0, dark: false },
+  { title: '', xLabel: '', yLabel: '', followWindow: 0, dark: false, renderer: 'webgl' },
 )
 
 const host = ref<HTMLDivElement>()
@@ -53,6 +55,7 @@ onMounted(() => {
       yLabel: props.yLabel,
       followWindow: props.followWindow,
       theme: props.dark ? darkTheme : lightTheme,
+      renderer: props.renderer,
     }),
   )
   plot.value = p
@@ -102,6 +105,7 @@ const fmt = (n: number) => n.toLocaleString('en-US')
       <span class="spacer" />
       <button class="item" title="Auto-scale (double-click)" @click="plot?.autoScale()">⤢ Auto</button>
       <span class="stats">
+        {{ plot?.rendererKind === 'webgl' ? 'WebGL' : 'Canvas 2D' }} ·
         {{ fmt(stats.drawnPoints) }} / {{ fmt(stats.totalPoints) }} điểm · {{ stats.renderMs.toFixed(1) }} ms<template v-if="stats.fps > 0"> · {{ stats.fps.toFixed(0) }} fps</template>
       </span>
     </div>

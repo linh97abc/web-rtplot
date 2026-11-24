@@ -1,22 +1,66 @@
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }
+:root {
+  /* Inter được đóng gói trong main.ts; system-ui chỉ là dự phòng khi font chưa tải xong */
+  --font: 'Inter Variable', system-ui, sans-serif;
+  --accent: #1f77b4;
+}
 body {
-  font: 13px/1.4 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font: 13px/1.4 var(--font);
   background: #f4f5f7;
   color: #222;
 }
 body.dark { background: #121215; color: #c8c8d0; }
+
+/*
+ * Nút, ô chọn và checkbox: tắt giao diện gốc của engine (appearance: none) rồi tự vẽ,
+ * để Chrome (Blink), Firefox (Gecko) và Tauri/Linux (WebKitGTK, theo GTK theme) trông giống nhau.
+ * Lưu ý: danh sách sổ xuống của <select> khi mở vẫn do hệ điều hành/engine vẽ.
+ */
 button, select {
+  appearance: none;
   font: inherit;
   padding: 4px 10px;
   border: 1px solid #c8c8cc;
   border-radius: 4px;
-  background: #fff;
+  background-color: #fff;
   color: inherit;
   cursor: pointer;
 }
-body.dark button, body.dark select { background: #26262b; border-color: #3a3a42; }
-button:disabled { opacity: .5; cursor: default; }
+button { display: inline-flex; align-items: center; gap: 6px; }
+select {
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 10px 6px;
+}
+body.dark button, body.dark select { background-color: #26262b; border-color: #3a3a42; }
+button:disabled, select:disabled { opacity: .5; cursor: default; }
+
+input[type='checkbox'] {
+  appearance: none;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid #b4b4ba;
+  border-radius: 3px;
+  background: #fff center / 10px 10px no-repeat;
+  cursor: pointer;
+}
+body.dark input[type='checkbox']:not(:checked) { background-color: #26262b; border-color: #4a4a52; }
+input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 5.2l2 2 4-4.4' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+button:focus-visible, select:focus-visible, input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .toolbar label { display: inline-flex; align-items: center; gap: 6px; }
 .muted { opacity: .65; }

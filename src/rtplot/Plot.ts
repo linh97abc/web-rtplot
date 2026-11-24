@@ -13,7 +13,10 @@ export interface PlotTheme {
   grid: string
   axis: string
   text: string
+  /** Font CSS (shorthand) cho nhãn trục, toạ độ con trỏ, trạng thái */
   font: string
+  /** Font CSS cho tiêu đề; mặc định '600 12px system-ui, sans-serif' */
+  titleFont?: string
 }
 
 export const lightTheme: PlotTheme = {
@@ -489,7 +492,7 @@ export class Plot {
     tl.begin()
     xt.ticks.forEach((x, i) => tl.text(formatTick(x, xt.step), xs[i] / d, (v.top + v.height) / d + 6, 'center', 'top', th.text, font))
     yt.ticks.forEach((y, i) => tl.text(formatTick(y, yt.step), v.left / d - 6, ys[i] / d, 'right', 'middle', th.text, font))
-    if (this.title) tl.text(this.title, (v.left + v.width / 2) / d, 6, 'center', 'top', th.text, '600 12px system-ui, sans-serif')
+    if (this.title) tl.text(this.title, (v.left + v.width / 2) / d, 6, 'center', 'top', th.text, th.titleFont ?? '600 12px system-ui, sans-serif')
     if (this.xLabel) tl.text(this.xLabel, (v.left + v.width / 2) / d, this.cssH - 4, 'center', 'bottom', th.text, font)
     if (this.yLabel) tl.text(this.yLabel, 12, (v.top + v.height / 2) / d, 'center', 'middle', th.text, font, -90)
     // toạ độ con trỏ
@@ -500,7 +503,7 @@ export class Plot {
     }
     // trạng thái
     if (this.followWindow > 0 && !this.autoX) {
-      tl.text('⏸ đã dừng bám (double-click để tiếp tục)', v.left / d + 6, v.top / d + 6, 'left', 'top', '#e0a030', font)
+      tl.text('Đã dừng bám (double-click để tiếp tục)', v.left / d + 6, v.top / d + 6, 'left', 'top', '#e0a030', font)
     }
     tl.end()
 

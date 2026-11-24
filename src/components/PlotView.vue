@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch, markRaw } from 'vue'
-import { Plot, darkTheme, lightTheme, type LinkGroup, type Series, type LinkAxes, type RendererKind } from '../rtplot'
+import { Plot, darkTheme, lightTheme, type LinkGroup, type Series, type LinkAxes, type RendererKind, type PlotTheme } from '../rtplot'
+import Icon from './Icon.vue'
+
+// cùng font với giao diện (Inter, đóng gói trong main.ts) → chữ trên plot giống nhau ở mọi trình duyệt
+const FONT_FAMILY = "'Inter Variable', system-ui, sans-serif"
+const themeFor = (dark: boolean): PlotTheme => ({
+  ...(dark ? darkTheme : lightTheme),
+  font: `11px ${FONT_FAMILY}`,
+  titleFont: `600 12px ${FONT_FAMILY}`,
+})
 
 const props = withDefaults(
   defineProps<{
@@ -54,7 +63,7 @@ onMounted(() => {
       xLabel: props.xLabel,
       yLabel: props.yLabel,
       followWindow: props.followWindow,
-      theme: props.dark ? darkTheme : lightTheme,
+      theme: themeFor(props.dark),
       renderer: props.renderer,
     }),
   )
@@ -70,7 +79,7 @@ watch(
   () => props.dark,
   (d) => {
     if (!plot.value) return
-    plot.value.theme = d ? darkTheme : lightTheme
+    plot.value.theme = themeFor(d)
     plot.value.invalidate()
   },
 )
@@ -103,7 +112,7 @@ const fmt = (n: number) => n.toLocaleString('en-US')
         {{ s.name }}
       </button>
       <span class="spacer" />
-      <button class="item" title="Auto-scale (double-click)" @click="plot?.autoScale()">⤢ Auto</button>
+      <button class="item" title="Auto-scale (double-click)" @click="plot?.autoScale()"><Icon name="fit" /> Auto</button>
       <span class="stats">
         {{ plot?.rendererKind === 'webgl' ? 'WebGL' : 'Canvas 2D' }} ·
         {{ fmt(stats.drawnPoints) }} / {{ fmt(stats.totalPoints) }} điểm · {{ stats.renderMs.toFixed(1) }} ms<template v-if="stats.fps > 0"> · {{ stats.fps.toFixed(0) }} fps</template>

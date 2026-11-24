@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import PlotView from '../components/PlotView.vue'
+import Icon from '../components/Icon.vue'
 import { LinkGroup, StreamSeries, type RendererKind } from '../rtplot'
 import { inTauri, startRustStream, stopRustStream } from './rustSource'
 
@@ -137,7 +138,7 @@ watch(linked, applyLink)
 <template>
   <div class="demo">
     <div class="toolbar">
-      <button @click="running = !running">{{ running ? '⏸ Tạm dừng' : '▶ Chạy' }}</button>
+      <button @click="running = !running"><Icon :name="running ? 'pause' : 'play'" />{{ running ? 'Tạm dừng' : 'Chạy' }}</button>
       <label>
         Tần số lấy mẫu
         <select v-model.number="sampleRate">

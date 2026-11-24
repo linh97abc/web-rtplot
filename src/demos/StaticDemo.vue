@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { markRaw, nextTick, onMounted, ref, shallowRef, watch } from 'vue'
 import PlotView from '../components/PlotView.vue'
+import Icon from '../components/Icon.vue'
 import { LinkGroup, SignalSeries, type Series, type RendererKind } from '../rtplot'
 
 const props = defineProps<{ dark: boolean; renderer: RendererKind }>()
@@ -127,7 +128,7 @@ onMounted(build)
           <option :value="10_000_000">10 triệu</option>
         </select>
       </label>
-      <button :disabled="busy" @click="build">↻ Tạo lại dữ liệu</button>
+      <button :disabled="busy" @click="build"><Icon name="refresh" /> Tạo lại dữ liệu</button>
       <label><input v-model="linkX" type="checkbox" /> Liên kết trục X</label>
       <label><input v-model="linkY" type="checkbox" /> Liên kết trục Y</label>
       <span class="muted">{{ busy ? 'Đang tạo dữ liệu…' : buildInfo }}</span>
